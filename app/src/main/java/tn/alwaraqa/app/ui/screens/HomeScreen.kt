@@ -59,6 +59,9 @@ import tn.alwaraqa.app.data.RecentDoc
 import tn.alwaraqa.app.pdf.PhoneLibrary
 import tn.alwaraqa.app.pdf.PhonePdf
 import tn.alwaraqa.app.pdf.Scanner
+import tn.alwaraqa.app.ui.components.DeleteDialog
+import tn.alwaraqa.app.ui.components.RenameDialog
+import tn.alwaraqa.app.ui.components.rememberFileActions
 import tn.alwaraqa.app.ui.components.DocGlyph
 import tn.alwaraqa.app.ui.components.WaraqaLogo
 import tn.alwaraqa.app.ui.theme.Brick
@@ -78,7 +81,13 @@ import java.util.Date
  * du téléphone. Le champ de recherche filtre les deux listes par nom.
  */
 @Composable
-fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit, onRemoveRecent: (RecentDoc) -> Unit) {
+fun HomeScreen(
+    recents: List<RecentDoc>,
+    onOpen: (Uri) -> Unit,
+    onRemoveRecent: (RecentDoc) -> Unit,
+    onRenamed: (oldUri: String, newUri: String, name: String) -> Unit,
+    onDeleted: (uri: String) -> Unit
+) {
     val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -128,7 +137,10 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit, onRemoveRecent: 
     }
 
     var query by rememberSaveable { mutableStateOf("") }
-    var toRemove by remember { mutableStateOf<RecentDoc?>(null) }
+    var target by remember { mutableStateOf<FileTarget?>(null) }
+    var renaming by remember { mutableStateOf<FileTarget?>(null) }
+    var deleting by remember { mutableStateOf<FileTarget?>(null) }
+    val files = rememberFileActions()
     val wanted = query.trim()
     val phoneList = phone.orEmpty()
     val recentShown = if (wanted.isEmpty()) recents else recents.filter { it.name.contains(wanted, ignoreCase = true) }
@@ -182,7 +194,7 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit, onRemoveRecent: 
                     RecentRow(
                         doc = doc,
                         onClick = { onOpen(Uri.parse(doc.uri)) },
-                        onLongClick = { toRemove = doc }
+                        onLongClick = { target = FileTarget(Uri.parse(doc.uri), doc.name, doc) }
                     )
                     HorizontalDivider(color = Sand)
                 }
@@ -218,7 +230,7 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit, onRemoveRecent: 
                 }
             } else {
                 items(phoneShown, key = { "t-" + it.uri }) { pdf ->
-                    PhoneRow(pdf) { onOpen(pdf.uri) }
+                    PhoneRow(pdf, onClick = { onOpen(pdf.uri) }, onLongClick = { target = FileTarget(pdf.uri, pdf.name, null) })
                     HorizontalDivider(color = Sand)
                 }
             }
@@ -267,21 +279,61 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit, onRemoveRecent: 
         }
     }
 
-    toRemove?.let { doc ->
+    target?.let { t ->
         AlertDialog(
-            onDismissRequest = { toRemove = null },
-            title = { Text("Retirer des récents ?") },
-            text = { Text("« ${doc.name} » ne sera plus dans la liste. Le fichier n'est pas supprimé du téléphone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onRemoveRecent(doc)
-                    toRemove = null
-                }) { Text("Retirer") }
+            onDismissRequest = { target = null },
+            title = { Text(t.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column {
+                    TextButton(onClick = { renaming = t; target = null }) { Text("Renommer") }
+                    TextButton(onClick = { deleting = t; target = null }) { Text("Supprimer du téléphone", color = Brick) }
+                    if (t.recent != null) {
+                        TextButton(onClick = { onRemoveRecent(t.recent); target = null }) { Text("Retirer des récents") }
+                    }
+                }
             },
-            dismissButton = { TextButton(onClick = { toRemove = null }) { Text("Annuler") } }
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { target = null }) { Text("Fermer") } }
+        )
+    }
+    renaming?.let { t ->
+        RenameDialog(
+            currentName = t.name,
+            onDismiss = { renaming = null },
+            onConfirm = { newName ->
+                renaming = null
+                files.rename(t.uri, newName) { result ->
+                    if (result != null) {
+                        onRenamed(t.uri.toString(), result.toString(), newName)
+                        refresh++
+                    } else {
+                        Toast.makeText(context, "Impossible de renommer ce fichier", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        )
+    }
+    deleting?.let { t ->
+        DeleteDialog(
+            name = t.name,
+            onDismiss = { deleting = null },
+            onConfirm = {
+                deleting = null
+                files.delete(t.uri) { ok ->
+                    if (ok) {
+                        onDeleted(t.uri.toString())
+                        refresh++
+                    } else {
+                        Toast.makeText(context, "Impossible de supprimer ce fichier", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
         )
     }
 }
+
+/** Le fichier sur lequel on a fait un appui long. */
+private class FileTarget(val uri: Uri, val name: String, val recent: RecentDoc?)
 
 @Composable
 private fun SectionLabel(text: String) {
@@ -372,7 +424,7 @@ private fun RecentRow(doc: RecentDoc, onClick: () -> Unit, onLongClick: () -> Un
         Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Retirer des récents")
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Options du fichier")
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)
@@ -396,8 +448,9 @@ private fun RecentRow(doc: RecentDoc, onClick: () -> Unit, onLongClick: () -> Un
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PhoneRow(pdf: PhonePdf, onClick: () -> Unit) {
+private fun PhoneRow(pdf: PhonePdf, onClick: () -> Unit, onLongClick: () -> Unit) {
     val context = LocalContext.current
     val details = remember(pdf) {
         val size = Formatter.formatShortFileSize(context, pdf.size)
@@ -408,7 +461,7 @@ private fun PhoneRow(pdf: PhonePdf, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)

@@ -1,6 +1,10 @@
 package tn.alwaraqa.app.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
+import tn.alwaraqa.app.ui.components.DeleteDialog
+import tn.alwaraqa.app.ui.components.RenameDialog
+import tn.alwaraqa.app.ui.components.rememberFileActions
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -118,14 +122,18 @@ private data class SearchHit(val page: Int, val snippet: String)
  */
 @OptIn(DelicateCoroutinesApi::class)
 @Composable
-fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Unit) {
+fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onEdit: (String) -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val view = LocalView.current
     val haptics = LocalHapticFeedback.current
     val settings = library.settings
     val look = lookFor(settings.theme)
     val key = uri.toString()
-    val name = remember(uri) { PdfDoc.displayName(context, uri) }
+    var name by remember(uri) { mutableStateOf(PdfDoc.displayName(context, uri)) }
+    val files = rememberFileActions()
+    var ocrOpen by remember(uri) { mutableStateOf(false) }
+    var renameOpen by remember(uri) { mutableStateOf(false) }
+    var deleteOpen by remember(uri) { mutableStateOf(false) }
 
     var phase by remember(uri) { mutableStateOf(Phase.Loading) }
     var password by remember(uri) { mutableStateOf<String?>(null) }
@@ -409,6 +417,34 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                                     }
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("Reconnaître le texte (OCR)") },
+                                    onClick = {
+                                        menuOpen = false
+                                        ocrOpen = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Modifier les pages") },
+                                    onClick = {
+                                        menuOpen = false
+                                        onEdit(name)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Renommer") },
+                                    onClick = {
+                                        menuOpen = false
+                                        renameOpen = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Supprimer") },
+                                    onClick = {
+                                        menuOpen = false
+                                        deleteOpen = true
+                                    }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Imprimer") },
                                     onClick = {
                                         menuOpen = false
@@ -452,6 +488,49 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                         look = look,
                         onJump = { index = it },
                         onLabelClick = { goToOpen = true }
+                    )
+                }
+
+                if (ocrOpen) {
+                    OcrDialog(doc = current, page = index, name = name, onClose = { ocrOpen = false })
+                }
+
+                if (renameOpen) {
+                    RenameDialog(
+                        currentName = name,
+                        onDismiss = { renameOpen = false },
+                        onConfirm = { newName ->
+                            renameOpen = false
+                            files.rename(uri, newName) { result ->
+                                if (result == null) {
+                                    Toast.makeText(context, "Impossible de renommer ce fichier", Toast.LENGTH_LONG).show()
+                                } else if (result == uri) {
+                                    library.rename(key, key, newName)
+                                    name = newName
+                                } else {
+                                    library.rename(key, result.toString(), newName)
+                                    onClose()
+                                }
+                            }
+                        }
+                    )
+                }
+
+                if (deleteOpen) {
+                    DeleteDialog(
+                        name = name,
+                        onDismiss = { deleteOpen = false },
+                        onConfirm = {
+                            deleteOpen = false
+                            files.delete(uri) { ok ->
+                                if (ok) {
+                                    library.forget(key)
+                                    onClose()
+                                } else {
+                                    Toast.makeText(context, "Impossible de supprimer ce fichier", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
                     )
                 }
 

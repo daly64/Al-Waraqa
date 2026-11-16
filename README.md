@@ -55,6 +55,9 @@
 - Numérisation de documents en PDF (détection des bords, recadrage, filtres) avec le scanner embarqué ML Kit, enregistrée dans `Documents/Al Waraqa`.
 - Vrais bruits de pages (enregistrements CC0 de Kenney), mot cherché surligné, zoom aussi en mode Défilement.
 - Mode Nuit intelligent : le texte est inversé, les images gardent leurs couleurs.
+- OCR sur le téléphone (Tesseract : français, arabe, anglais) : texte d'une page copiable, ou de tout le document en `.txt`.
+- Renommer et supprimer un PDF (appui long sur la liste, ou menu du lecteur).
+- Modifier les pages : pivoter, supprimer, réordonner, ajouter un autre PDF, avec PDFBox.
 - Touches de volume pour tourner les pages, liste de tous les PDF du téléphone.
 
 ### Structure
@@ -83,6 +86,9 @@ Chaque envoi sur `main` compile l'APK avec GitHub Actions. L'APK est publié dan
 Les APK sont signés avec une clé de test fixe (`app/alwaraqa-test.keystore`). Une nouvelle version s'installe donc par-dessus la précédente, sans désinstaller ni perdre les données. Pour cela, `versionCode` augmente à chaque version et `applicationId` ne change jamais.
 
 ## Licences
+
+Tesseract et ses modèles de langue (Apache 2.0), PDFBox Android (Apache 2.0).
+
 
 Bricolage Grotesque et Aref Ruqaa sont distribuées sous licence SIL Open Font License (voir `licenses/`).
 

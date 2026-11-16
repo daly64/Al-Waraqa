@@ -30,6 +30,7 @@ import tn.alwaraqa.app.ui.components.BookmarkGlyph
 import tn.alwaraqa.app.ui.components.DocGlyph
 import tn.alwaraqa.app.ui.components.SlidersGlyph
 import tn.alwaraqa.app.ui.screens.BookmarksScreen
+import tn.alwaraqa.app.ui.screens.EditorScreen
 import tn.alwaraqa.app.ui.screens.HomeScreen
 import tn.alwaraqa.app.ui.screens.OnboardingScreen
 import tn.alwaraqa.app.ui.screens.ReaderScreen
@@ -40,7 +41,7 @@ import tn.alwaraqa.app.ui.theme.InkSoft
 import tn.alwaraqa.app.ui.theme.Paper
 import tn.alwaraqa.app.ui.theme.Sand
 
-private enum class Screen { Onboarding, Splash, Main, Reader }
+private enum class Screen { Onboarding, Splash, Main, Reader, Editor }
 
 private enum class Tab(val label: String) {
     Documents("Documents"),
@@ -58,6 +59,7 @@ fun AlWaraqaApp(library: Library, incoming: Uri?, onIncomingHandled: () -> Unit)
     var tab by remember { mutableStateOf(Tab.Documents) }
     var readerUri by remember { mutableStateOf<Uri?>(null) }
     var readerPage by remember { mutableStateOf<Int?>(null) }
+    var editorName by remember { mutableStateOf("Document.pdf") }
     var recents by remember { mutableStateOf(library.recents()) }
     var bookmarks by remember { mutableStateOf(library.bookmarks()) }
 
@@ -106,6 +108,16 @@ fun AlWaraqaApp(library: Library, incoming: Uri?, onIncomingHandled: () -> Unit)
                         onRemoveRecent = {
                             library.remove(it.uri)
                             recents = library.recents()
+                        },
+                        onRenamed = { old, new, name ->
+                            library.rename(old, new, name)
+                            recents = library.recents()
+                            bookmarks = library.bookmarks()
+                        },
+                        onDeleted = {
+                            library.forget(it)
+                            recents = library.recents()
+                            bookmarks = library.bookmarks()
                         }
                     )
                     Tab.Bookmarks -> BookmarksScreen(
@@ -123,6 +135,22 @@ fun AlWaraqaApp(library: Library, incoming: Uri?, onIncomingHandled: () -> Unit)
             TabBar(selected = tab, onSelect = { tab = it })
         }
 
+        Screen.Editor -> {
+            val uri = readerUri
+            if (uri == null) {
+                screen = Screen.Main
+            } else {
+                EditorScreen(
+                    uri = uri,
+                    name = editorName,
+                    onDone = { result ->
+                        if (result != null) readerUri = result
+                        screen = Screen.Reader
+                    }
+                )
+            }
+        }
+
         Screen.Reader -> {
             val uri = readerUri
             if (uri == null) {
@@ -132,6 +160,10 @@ fun AlWaraqaApp(library: Library, incoming: Uri?, onIncomingHandled: () -> Unit)
                     uri = uri,
                     startPage = readerPage,
                     library = library,
+                    onEdit = { n ->
+                        editorName = n
+                        screen = Screen.Editor
+                    },
                     onClose = {
                         screen = Screen.Main
                         readerUri = null

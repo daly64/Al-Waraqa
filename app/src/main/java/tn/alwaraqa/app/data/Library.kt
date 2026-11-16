@@ -141,6 +141,18 @@ class Library(context: Context) {
         writeRecents(recents().filter { it.uri != uri })
     }
 
+    /** Le fichier a été renommé : récents et marque-pages suivent. */
+    fun rename(oldUri: String, newUri: String, newName: String) {
+        writeRecents(recents().map { if (it.uri == oldUri) it.copy(uri = newUri, name = newName) else it })
+        writeBookmarks(bookmarks().map { if (it.uri == oldUri) it.copy(uri = newUri, name = newName) else it })
+    }
+
+    /** Le fichier a été supprimé du téléphone : on l'oublie partout. */
+    fun forget(uri: String) {
+        remove(uri)
+        writeBookmarks(bookmarks().filterNot { it.uri == uri })
+    }
+
     private fun writeRecents(docs: List<RecentDoc>) {
         val array = JSONArray()
         docs.forEach { d ->
