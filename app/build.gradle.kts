@@ -13,8 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Mise à jour : augmenter versionCode à chaque version, ne jamais changer applicationId.
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     // Clé de test fixe, gardée dans le dépôt : chaque APK porte la même signature,
@@ -67,4 +67,7 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+
+    // Moteur PDF embarqué : sommaire, texte et mots de passe sur toutes les versions d'Android
+    implementation("io.legere:pdfiumandroid:1.0.30")
 }

@@ -24,6 +24,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Matrix
@@ -49,6 +50,7 @@ private data class Turn(val forward: Boolean, val fromTop: Boolean)
 private enum class Gesture { Undecided, Turn, Pan, Zoom, Ignored }
 
 private const val MAX_ZOOM = 5f
+private const val DOUBLE_TAP_ZOOM = 2.5f
 
 /**
  * Mode Livre : les pages se tournent au doigt, comme du papier.
@@ -56,7 +58,8 @@ private const val MAX_ZOOM = 5f
  * - glisser depuis la moitié droite : page suivante ; depuis la moitié gauche : page précédente ;
  * - appuyer sur le bord droit ou gauche : la page se tourne toute seule ;
  * - appuyer au centre : [onCenterTap] (afficher ou masquer les barres) ;
- * - écarter ou pincer deux doigts : zoom ; une fois zoomé, un doigt déplace la page.
+ * - écarter ou pincer deux doigts : zoom ; une fois zoomé, un doigt déplace la page ;
+ * - double appui : zoom rapide, puis retour à la page entière.
  *
  * Le pli est calculé en 2D : la ligne de pli est la médiatrice entre le coin de la page
  * et sa position actuelle. D'un côté on voit la page du dessous, de l'autre le verso replié.
@@ -68,7 +71,9 @@ fun BookPager(
     pages: Map<Int, ImageBitmap>,
     sharpPage: ImageBitmap?,
     paper: Color,
+    filter: ColorFilter?,
     onIndexChange: (Int) -> Unit,
+    onTurned: () -> Unit,
     onCenterTap: () -> Unit,
     onZoomChange: (Float) -> Unit,
     modifier: Modifier = Modifier
@@ -82,6 +87,7 @@ fun BookPager(
     val currentOnIndexChange by rememberUpdatedState(onIndexChange)
     val currentOnCenterTap by rememberUpdatedState(onCenterTap)
     val currentOnZoomChange by rememberUpdatedState(onZoomChange)
+    val currentOnTurned by rememberUpdatedState(onTurned)
 
     // Zoom : écran = décalage + zoom × page
     var zoom by remember { mutableFloatStateOf(1f) }
@@ -132,8 +138,14 @@ fun BookPager(
             animate(0f, 1f, animationSpec = tween(320, easing = FastOutSlowInEasing)) { v, _ ->
                 corner = clampCorner(start + (target - start) * v, cornerY, width)
             }
-            if (t.forward && toTurned) currentOnIndexChange(currentIndex + 1)
-            if (!t.forward && !toTurned) currentOnIndexChange(currentIndex - 1)
+            if (t.forward && toTurned) {
+                currentOnIndexChange(currentIndex + 1)
+                currentOnTurned()
+            }
+            if (!t.forward && !toTurned) {
+                currentOnIndexChange(currentIndex - 1)
+                currentOnTurned()
+            }
             turn = null
             busy = false
         }
@@ -153,15 +165,39 @@ fun BookPager(
                 corner = clampCorner(raw, height, width)
             }
             currentOnIndexChange(if (forward) currentIndex + 1 else currentIndex - 1)
+            currentOnTurned()
             turn = null
             busy = false
+        }
+    }
+
+    /** Double appui : zoom autour du point touché, ou retour à la page entière. */
+    fun toggleZoom(at: Offset, width: Float, height: Float) {
+        if (busy || turn != null) return
+        val fromZoom = zoom
+        val fromPan = pan
+        val toZoom = if (zoom > 1.01f) 1f else DOUBLE_TAP_ZOOM
+        val toPan = if (toZoom == 1f) Offset.Zero else Offset(
+            (at.x - at.x * toZoom).coerceIn(width - width * toZoom, 0f),
+            (at.y - at.y * toZoom).coerceIn(height - height * toZoom, 0f)
+        )
+        scope.launch {
+            animate(0f, 1f, animationSpec = tween(220, easing = FastOutSlowInEasing)) { v, _ ->
+                zoom = fromZoom + (toZoom - fromZoom) * v
+                pan = fromPan + (toPan - fromPan) * v
+            }
+            zoom = toZoom
+            pan = toPan
+            currentOnZoomChange(toZoom)
         }
     }
 
     Canvas(
         modifier
             .pointerInput(Unit) {
-                detectTapGestures { pos ->
+                detectTapGestures(
+                    onDoubleTap = { pos -> toggleZoom(pos, size.width.toFloat(), size.height.toFloat()) }
+                ) { pos ->
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
                     when {
@@ -261,7 +297,7 @@ fun BookPager(
                 translate(pan.x, pan.y)
                 scale(zoom, zoom, pivot = Offset.Zero)
             }) {
-                drawSheet(sharpPage ?: pages[index], paper)
+                drawSheet(sharpPage ?: pages[index], paper, filter)
             }
         } else {
             val top = if (t.forward) index else index - 1
@@ -270,6 +306,7 @@ fun BookPager(
                 top = pages[top],
                 under = pages[under],
                 paper = paper,
+                filter = filter,
                 pageCorner = Offset(size.width, if (t.fromTop) 0f else size.height),
                 movedCorner = corner
             )
@@ -278,7 +315,7 @@ fun BookPager(
 }
 
 /** Une feuille à plat : le papier, puis l'image de la page centrée dessus. */
-private fun DrawScope.drawSheet(image: ImageBitmap?, paper: Color) {
+private fun DrawScope.drawSheet(image: ImageBitmap?, paper: Color, filter: ColorFilter?) {
     drawRect(paper)
     if (image == null) return
     val scale = min(size.width / image.width, size.height / image.height)
@@ -288,6 +325,7 @@ private fun DrawScope.drawSheet(image: ImageBitmap?, paper: Color) {
         image = image,
         dstOffset = IntOffset(((size.width - w) / 2f).roundToInt(), ((size.height - h) / 2f).roundToInt()),
         dstSize = IntSize(w.roundToInt(), h.roundToInt()),
+        colorFilter = filter,
         filterQuality = FilterQuality.Medium
     )
 }
@@ -297,13 +335,14 @@ private fun DrawScope.drawCurl(
     top: ImageBitmap?,
     under: ImageBitmap?,
     paper: Color,
+    filter: ColorFilter?,
     pageCorner: Offset,
     movedCorner: Offset
 ) {
     val v = pageCorner - movedCorner
     val dist = v.getDistance()
     if (dist < 2f) {
-        drawSheet(top, paper)
+        drawSheet(top, paper, filter)
         return
     }
     val n = v / dist                      // normale du pli, vers le coin d'origine
@@ -328,7 +367,7 @@ private fun DrawScope.drawCurl(
 
     clipRect {
         // 1. La page du dessous, avec l'ombre de la feuille qui se soulève
-        drawSheet(under, paper)
+        drawSheet(under, paper, filter)
         clipPath(liftedSide) {
             drawRect(
                 brush = Brush.linearGradient(
@@ -342,7 +381,7 @@ private fun DrawScope.drawCurl(
 
         // 2. Ce qui reste à plat de la page du dessus
         clipPath(flatSide) {
-            drawSheet(top, paper)
+            drawSheet(top, paper, filter)
             // ombre portée par le verso replié
             drawRect(
                 brush = Brush.linearGradient(

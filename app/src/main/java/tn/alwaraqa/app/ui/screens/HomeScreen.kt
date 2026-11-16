@@ -24,8 +24,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,12 +67,15 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit) {
         }
     }
 
+    var query by rememberSaveable { mutableStateOf("") }
+    val wanted = query.trim()
+
     Column(
         Modifier
             .fillMaxSize()
             .background(Cream)
             .windowInsetsPadding(WindowInsets.displayCutout)
-            .padding(start = 24.dp, end = 24.dp, top = 40.dp, bottom = 24.dp)
+            .padding(start = 24.dp, end = 24.dp, top = 40.dp, bottom = 16.dp)
     ) {
         Text(
             "Documents",
@@ -76,7 +84,18 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit) {
             fontWeight = FontWeight.ExtraBold,
             fontSize = 32.sp
         )
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
+        if (recents.isNotEmpty()) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Rechercher un PDF") },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(20.dp))
+        }
 
         if (recents.isEmpty()) {
             Column(
@@ -102,6 +121,22 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit) {
                     fontSize = 15.sp,
                     textAlign = TextAlign.Center
                 )
+            }
+        } else if (wanted.isNotEmpty()) {
+            // Recherche par nom parmi les documents déjà ouverts
+            val found = recents.filter { it.name.contains(wanted, ignoreCase = true) }
+            LazyColumn(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                item {
+                    SectionLabel(if (found.isEmpty()) "Aucun document trouvé" else "${found.size} document(s)")
+                }
+                items(found, key = { it.uri }) { doc ->
+                    RecentRow(doc) { onOpen(Uri.parse(doc.uri)) }
+                    HorizontalDivider(color = Sand)
+                }
             }
         } else {
             val current = recents.first()

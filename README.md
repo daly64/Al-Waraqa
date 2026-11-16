@@ -43,33 +43,34 @@
 ## L'application
 
 - 100 % locale, écrite en Kotlin avec Jetpack Compose.
-- Rendu des PDF par le moteur intégré d'Android (`PdfRenderer`).
-- Mode Livre : la page suit le doigt et se replie comme du papier (`ui/reader/BookPager.kt`).
-- Marges blanches rognées automatiquement : le texte occupe tout l'écran.
-- Zoom à deux doigts, avec page redessinée finement pour rester nette.
-- Reprise à la dernière page lue.
+- Rendu des PDF par PDFium, embarqué dans l'app (bibliothèque `io.legere:pdfiumandroid`).
+- Mode Livre : la page suit le doigt et se replie comme du papier, avec son et vibration.
+- Mode Défilement : les pages se suivent de haut en bas.
+- Marges blanches rognées automatiquement : le texte occupe tout l'écran, à taille homogène.
+- Zoom à deux doigts ou par double appui, page redessinée finement pour rester nette.
+- Thèmes de lecture Clair, Sépia et Nuit.
+- Marque-pages, sommaire, « aller à la page », recherche dans le texte.
+- Recherche d'un PDF par son nom, reprise à la dernière page lue.
+- PDF protégés par mot de passe, partage et impression.
 
 ### Structure
 
 ```
 app/src/main/java/tn/alwaraqa/app/
-├── MainActivity.kt        plein écran, PDF reçu d'une autre app
-├── data/Library.kt        documents récents et dernière page lue
-├── pdf/PdfDoc.kt          ouverture et rendu des pages
+├── MainActivity.kt          plein écran, PDF reçu d'une autre app
+├── data/Library.kt          récents, marque-pages, réglages
+├── pdf/PdfDoc.kt            ouverture, rendu, sommaire, texte
+├── pdf/Sharing.kt           partage et impression
 └── ui/
-    ├── AlWaraqaApp.kt     enchaînement des écrans
-    ├── components/Logo.kt logo dessiné
-    ├── reader/BookPager.kt page tournée
-    ├── screens/           bienvenue, splash, documents, lecteur
-    └── theme/Theme.kt     couleurs et polices
+    ├── AlWaraqaApp.kt       enchaînement des écrans et onglets
+    ├── components/          logo et icônes dessinés
+    ├── reader/BookPager.kt  page tournée, zoom
+    ├── reader/ScrollPager.kt défilement vertical
+    ├── reader/ReadingLook.kt thèmes de lecture
+    ├── reader/PageSound.kt  son de page tournée
+    ├── screens/             bienvenue, splash, documents, marque-pages, réglages, lecteur
+    └── theme/Theme.kt       couleurs et polices
 ```
-
-### Étapes
-
-1. Ouvrir un PDF et tourner les pages (version actuelle)
-2. Bibliothèque et recherche
-3. Marque-pages, recherche dans le document, sommaire
-4. Réglages, mode nuit, finitions
 
 ## Compilation et mises à jour
 
@@ -77,6 +78,8 @@ Chaque envoi sur `main` compile l'APK avec GitHub Actions. L'APK est publié dan
 
 Les APK sont signés avec une clé de test fixe (`app/alwaraqa-test.keystore`). Une nouvelle version s'installe donc par-dessus la précédente, sans désinstaller ni perdre les données. Pour cela, `versionCode` augmente à chaque version et `applicationId` ne change jamais.
 
-## Licences des polices
+## Licences
 
 Bricolage Grotesque et Aref Ruqaa sont distribuées sous licence SIL Open Font License (voir `licenses/`).
+
+PDFium et pdfiumandroid sont distribués sous licences BSD et Apache 2.0.
