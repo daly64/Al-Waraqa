@@ -41,6 +41,15 @@ class Settings(private val prefs: SharedPreferences) {
     private var soundState by mutableStateOf(prefs.getBoolean("sound", true))
     private var hapticState by mutableStateOf(prefs.getBoolean("haptic", true))
     private var uniformCropState by mutableStateOf(prefs.getBoolean("uniformCrop", true))
+    private var volumeKeysState by mutableStateOf(prefs.getBoolean("volumeKeys", true))
+
+    /** Les touches de volume tournent les pages pendant la lecture. */
+    var volumeKeys: Boolean
+        get() = volumeKeysState
+        set(value) {
+            volumeKeysState = value
+            prefs.edit().putBoolean("volumeKeys", value).apply()
+        }
 
     var theme: ReadingTheme
         get() = themeState

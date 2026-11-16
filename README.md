@@ -52,6 +52,10 @@
 - Marque-pages, sommaire, « aller à la page », recherche dans le texte.
 - Recherche d'un PDF par son nom, reprise à la dernière page lue.
 - PDF protégés par mot de passe, partage et impression.
+- Numérisation de documents en PDF (détection des bords, recadrage, filtres) avec le scanner embarqué ML Kit, enregistrée dans `Documents/Al Waraqa`.
+- Vrais bruits de pages (enregistrements CC0 de Kenney), mot cherché surligné, zoom aussi en mode Défilement.
+- Mode Nuit intelligent : le texte est inversé, les images gardent leurs couleurs.
+- Touches de volume pour tourner les pages, liste de tous les PDF du téléphone.
 
 ### Structure
 

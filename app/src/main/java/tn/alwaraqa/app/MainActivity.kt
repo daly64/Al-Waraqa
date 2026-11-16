@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,6 +18,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import tn.alwaraqa.app.data.Library
 import tn.alwaraqa.app.ui.AlWaraqaApp
+import tn.alwaraqa.app.ui.reader.PageSound
+import tn.alwaraqa.app.ui.reader.ReaderKeys
 import tn.alwaraqa.app.ui.theme.AlWaraqaTheme
 
 class MainActivity : ComponentActivity() {
@@ -34,6 +37,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         enterFullScreen()
+        PageSound.init(this)
         incoming = pdfFrom(intent)
         val library = Library(this)
         setContent {
@@ -51,6 +55,18 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pdfFrom(intent)?.let { incoming = it }
+    }
+
+    /** Pendant la lecture, les touches de volume tournent les pages au lieu de changer le son. */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val volume = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || event.keyCode == KeyEvent.KEYCODE_VOLUME_UP
+        if (volume && ReaderKeys.active) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                ReaderKeys.press(forward = event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

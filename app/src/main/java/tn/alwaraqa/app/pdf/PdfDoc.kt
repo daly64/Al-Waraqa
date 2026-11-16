@@ -2,6 +2,10 @@ package tn.alwaraqa.app.pdf
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Color
 import android.graphics.RectF
 import android.net.Uri
@@ -51,8 +55,17 @@ class PdfDoc private constructor(private val document: PdfDocument) {
      * Rend la page [index] en image. Les marges blanches sont rognées, puis le contenu est
      * agrandi pour tenir au plus juste dans [maxWidth] × [maxHeight]. Avec [uniform], le même
      * recadrage sert à toutes les pages : la taille du texte ne change pas d'une page à l'autre.
+     * [night] applique le mode Nuit (texte inversé, images préservées) ; [highlight] surligne
+     * chaque occurrence de ce mot ou de cette phrase.
      */
-    suspend fun render(index: Int, maxWidth: Int, maxHeight: Int, uniform: Boolean): Bitmap? =
+    suspend fun render(
+        index: Int,
+        maxWidth: Int,
+        maxHeight: Int,
+        uniform: Boolean,
+        night: Boolean = false,
+        highlight: String? = null
+    ): Bitmap? =
         withContext(Dispatchers.IO) {
             lock.withLock {
                 if (closed || index !in 0 until pageCount) return@withLock null
@@ -72,16 +85,25 @@ class PdfDoc private constructor(private val document: PdfDocument) {
                         val h = max(1, (contentH * scale).roundToInt())
                         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                         bitmap.eraseColor(Color.WHITE)
+                        val startX = -(area.left * pageW * scale).roundToInt()
+                        val startY = -(area.top * pageH * scale).roundToInt()
+                        val sizeX = (pageW * scale).roundToInt()
+                        val sizeY = (pageH * scale).roundToInt()
                         page.renderPageBitmap(
                             bitmap,
-                            -(area.left * pageW * scale).roundToInt(),
-                            -(area.top * pageH * scale).roundToInt(),
-                            (pageW * scale).roundToInt(),
-                            (pageH * scale).roundToInt(),
+                            startX,
+                            startY,
+                            sizeX,
+                            sizeY,
                             renderAnnot = true,
                             canvasColor = Color.WHITE,
                             pageBackgroundColor = Color.WHITE
                         )
+                        if (night) NightPage.apply(bitmap)
+                        val wanted = highlight?.trim()
+                        if (!wanted.isNullOrEmpty()) {
+                            drawHighlights(page, bitmap, startX, startY, sizeX, sizeY, wanted, night)
+                        }
                         bitmap
                     } finally {
                         page.close()
@@ -91,6 +113,60 @@ class PdfDoc private constructor(private val document: PdfDocument) {
                 }
             }
         }
+
+    /** Surligne chaque occurrence de [query] sur l'image de la page. */
+    private fun drawHighlights(
+        page: PdfPage,
+        bitmap: Bitmap,
+        startX: Int,
+        startY: Int,
+        sizeX: Int,
+        sizeY: Int,
+        query: String,
+        night: Boolean
+    ) {
+        try {
+            val text = page.openTextPage()
+            try {
+                val count = text.textPageCountChars()
+                if (count <= 0) return
+                val content = text.textPageGetText(0, count) ?: return
+                val canvas = Canvas(bitmap)
+                val paint = Paint().apply {
+                    if (night) {
+                        color = 0x8CE8A04A.toInt()
+                    } else {
+                        // Multiplier garde le texte bien noir sous le jaune, comme un surligneur
+                        color = 0xFFFFD45A.toInt()
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+                    }
+                }
+                val pad = max(1f, bitmap.width / 400f)
+                var from = 0
+                var guard = 0
+                while (guard++ < MAX_MARKS) {
+                    val at = content.indexOf(query, from, ignoreCase = true)
+                    if (at < 0) break
+                    val rects = text.textPageCountRects(at, query.length)
+                    for (i in 0 until rects) {
+                        val r = text.textPageGetRect(i) ?: continue
+                        val d = page.mapRectToDevice(startX, startY, sizeX, sizeY, 0, r)
+                        canvas.drawRect(
+                            min(d.left, d.right) - pad,
+                            min(d.top, d.bottom) - pad,
+                            max(d.left, d.right) + pad,
+                            max(d.top, d.bottom) + pad,
+                            paint
+                        )
+                    }
+                    from = at + query.length
+                }
+            } finally {
+                text.close()
+            }
+        } catch (_: Throwable) {
+        }
+    }
 
     /** Le sommaire du document, à plat, avec le niveau de chaque titre. Vide s'il n'y en a pas. */
     suspend fun outline(): List<OutlineItem> = withContext(Dispatchers.IO) {
@@ -286,6 +362,7 @@ class PdfDoc private constructor(private val document: PdfDocument) {
         private const val MAX_PIXELS = 14_000_000f
         private const val SAMPLE_PAGES = 12
         private const val MAX_OUTLINE = 2000
+        private const val MAX_MARKS = 200
 
         /** Ouvre le PDF, avec son mot de passe s'il en a un. */
         suspend fun open(context: Context, uri: Uri, password: String?): OpenResult =

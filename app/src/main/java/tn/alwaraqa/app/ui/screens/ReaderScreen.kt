@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +27,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -63,6 +68,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import tn.alwaraqa.app.data.Library
 import tn.alwaraqa.app.data.ReadingTheme
@@ -87,6 +95,7 @@ import tn.alwaraqa.app.pdf.sharePdf
 import tn.alwaraqa.app.ui.components.BookmarkGlyph
 import tn.alwaraqa.app.ui.reader.BookPager
 import tn.alwaraqa.app.ui.reader.PageSound
+import tn.alwaraqa.app.ui.reader.ReaderKeys
 import tn.alwaraqa.app.ui.reader.ReadingLook
 import tn.alwaraqa.app.ui.reader.ScrollPager
 import tn.alwaraqa.app.ui.reader.lookFor
@@ -139,6 +148,13 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
     var searchOpen by remember { mutableStateOf(false) }
     var outline by remember(uri) { mutableStateOf<List<OutlineItem>?>(null) }
 
+    // Mot recherché, surligné sur les pages, et pages où il apparaît
+    var highlight by remember(uri) { mutableStateOf<String?>(null) }
+    var hitPages by remember(uri) { mutableStateOf<List<Int>>(emptyList()) }
+
+    // Pages tournées à la demande (touches de volume)
+    val flips = remember { MutableSharedFlow<Boolean>(extraBufferCapacity = 4) }
+
     // Ouverture du document (avec le mot de passe s'il en faut un), reprise à la dernière page lue
     LaunchedEffect(uri, attempt) {
         phase = Phase.Loading
@@ -179,13 +195,30 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
     val current = doc
     val uniform = settings.uniformCrop
     val bookMode = settings.bookMode
+    val night = look.nightPages
+
+    // Touches de volume : volume bas = page suivante, volume haut = page précédente
+    DisposableEffect(settings.volumeKeys) {
+        ReaderKeys.active = settings.volumeKeys
+        onDispose { ReaderKeys.active = false }
+    }
+    LaunchedEffect(bookMode, current) {
+        ReaderKeys.presses.collect { forward ->
+            val d = current ?: return@collect
+            if (bookMode) {
+                flips.tryEmit(forward)
+            } else {
+                index = (index + if (forward) 1 else -1).coerceIn(0, d.pageCount - 1)
+            }
+        }
+    }
 
     // Mode Livre : rendu de la page courante et de ses voisines, pour une animation fluide
-    LaunchedEffect(current, index, viewSize, uniform, bookMode) {
+    LaunchedEffect(current, index, viewSize, uniform, bookMode, night, highlight) {
         if (current == null || viewSize.width == 0 || viewSize.height == 0) return@LaunchedEffect
         if (bookMode) {
             // Changement de taille (rotation) ou de recadrage : les images sont à refaire
-            val stamp = "${viewSize.width}x${viewSize.height}-$uniform"
+            val stamp = "${viewSize.width}x${viewSize.height}-$uniform-$night-$highlight"
             if (renderedFor[0] != stamp) {
                 pages.clear()
                 renderedFor[0] = stamp
@@ -196,7 +229,7 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
             val h = (viewSize.height * limit).roundToInt()
             for (i in listOf(index, index + 1, index - 1)) {
                 if (i in 0 until current.pageCount && !pages.containsKey(i)) {
-                    val bitmap = current.render(i, w, h, uniform)
+                    val bitmap = current.render(i, w, h, uniform, night, highlight)
                     if (bitmap != null) pages[i] = bitmap.asImageBitmap()
                 }
             }
@@ -214,14 +247,16 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
         zoom <= 2.2f -> 2
         else -> 3
     }
-    LaunchedEffect(current, index, sharpness, viewSize, uniform) {
-        if (sharp?.first != index) sharp = null
+    LaunchedEffect(current, index, sharpness, viewSize, uniform, night, highlight) {
+        sharp = null
         if (current == null || sharpness == 1 || viewSize.width == 0 || viewSize.height == 0) {
             sharp = null
             return@LaunchedEffect
         }
         delay(220)
-        val bitmap = current.render(index, viewSize.width * sharpness, viewSize.height * sharpness, uniform)
+        val bitmap = current.render(
+            index, viewSize.width * sharpness, viewSize.height * sharpness, uniform, night, highlight
+        )
         if (bitmap != null) sharp = index to bitmap.asImageBitmap()
     }
 
@@ -271,6 +306,7 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                         sharpPage = sharp?.takeIf { it.first == index }?.second,
                         paper = look.paper,
                         filter = look.filter,
+                        flipRequests = flips,
                         onIndexChange = { index = it.coerceIn(0, current.pageCount - 1) },
                         onTurned = {
                             if (settings.sound) PageSound.play()
@@ -286,6 +322,8 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                         index = index,
                         widthPx = viewSize.width,
                         uniformCrop = uniform,
+                        night = night,
+                        highlight = highlight,
                         paper = look.paper,
                         filter = look.filter,
                         onIndexChange = { index = it.coerceIn(0, current.pageCount - 1) },
@@ -330,6 +368,9 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                             onClick = {
                                 marked = library.toggleBookmark(key, name, index)
                                 if (settings.haptic) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            },
+                            modifier = Modifier.semantics {
+                                contentDescription = if (marked) "Retirer le marque-page" else "Marquer la page"
                             }
                         ) {
                             BookmarkGlyph(tint = if (marked) look.accent else look.text, filled = marked)
@@ -379,6 +420,25 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                     }
                 }
 
+                // Mot surligné : passer d'une page trouvée à l'autre
+                val word = highlight
+                if (word != null) {
+                    HighlightPill(
+                        word = word,
+                        index = index,
+                        hitPages = hitPages,
+                        look = look,
+                        onGo = { index = it },
+                        onClear = {
+                            highlight = null
+                            hitPages = emptyList()
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = if (barsVisible) 76.dp else 20.dp)
+                    )
+                }
+
                 // Barre du bas
                 AnimatedVisibility(
                     visible = barsVisible,
@@ -420,9 +480,13 @@ fun ReaderScreen(uri: Uri, startPage: Int?, library: Library, onClose: () -> Uni
                 if (searchOpen) {
                     SearchPanel(
                         doc = current,
-                        onPick = {
-                            index = it
+                        initial = highlight.orEmpty(),
+                        onPick = { page, query, pagesFound ->
+                            highlight = query
+                            hitPages = pagesFound
+                            index = page
                             searchOpen = false
+                            barsVisible = false
                         },
                         onClose = { searchOpen = false }
                     )
@@ -594,9 +658,15 @@ private fun OutlineDialog(outline: List<OutlineItem>?, onPick: (Int) -> Unit, on
 
 /** Recherche d'un mot ou d'une phrase dans tout le document ; chaque résultat mène à sa page. */
 @Composable
-private fun SearchPanel(doc: PdfDoc, onPick: (Int) -> Unit, onClose: () -> Unit) {
-    var query by remember { mutableStateOf("") }
-    var running by remember { mutableStateOf<String?>(null) }
+private fun SearchPanel(
+    doc: PdfDoc,
+    initial: String,
+    onPick: (page: Int, query: String, pages: List<Int>) -> Unit,
+    onClose: () -> Unit
+) {
+    var query by remember { mutableStateOf(initial) }
+    // Un mot déjà surligné : ses résultats réapparaissent tout de suite
+    var running by remember { mutableStateOf<String?>(initial.ifBlank { null }) }
     var searching by remember { mutableStateOf(false) }
     var scanned by remember { mutableIntStateOf(0) }
     var sawText by remember { mutableStateOf(false) }
@@ -692,7 +762,9 @@ private fun SearchPanel(doc: PdfDoc, onPick: (Int) -> Unit, onClose: () -> Unit)
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { onPick(hit.page) }
+                        .clickable {
+                            onPick(hit.page, running?.trim().orEmpty(), hits.map { it.page }.distinct())
+                        }
                         .padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -701,6 +773,55 @@ private fun SearchPanel(doc: PdfDoc, onPick: (Int) -> Unit, onClose: () -> Unit)
                 }
                 HorizontalDivider(color = Sand)
             }
+        }
+    }
+}
+
+/** Bandeau du mot surligné : pages précédente et suivante qui le contiennent, et bouton pour l'effacer. */
+@Composable
+private fun HighlightPill(
+    word: String,
+    index: Int,
+    hitPages: List<Int>,
+    look: ReadingLook,
+    onGo: (Int) -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier
+) {
+    val previous = hitPages.lastOrNull { it < index }
+    val next = hitPages.firstOrNull { it > index }
+    val position = hitPages.indexOf(index)
+    Row(
+        modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(look.bar)
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = { previous?.let(onGo) }, enabled = previous != null) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = "Page trouvée précédente",
+                tint = if (previous != null) look.accent else look.line
+            )
+        }
+        Text(
+            if (position >= 0) "« $word » · ${position + 1}/${hitPages.size}" else "« $word »",
+            color = look.text,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        IconButton(onClick = { next?.let(onGo) }, enabled = next != null) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Page trouvée suivante",
+                tint = if (next != null) look.accent else look.line
+            )
+        }
+        IconButton(onClick = onClear) {
+            Icon(Icons.Filled.Close, contentDescription = "Effacer le surlignage", tint = look.textSoft)
         }
     }
 }

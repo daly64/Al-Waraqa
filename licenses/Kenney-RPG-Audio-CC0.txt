@@ -1,0 +1,8 @@
+Sons de page tournée (app/src/main/res/raw/page_flip_*.ogg)
+
+Source : « RPG Audio » de Kenney (www.kenney.nl), fichiers bookFlip1, bookFlip2, bookFlip3,
+convertis en mono.
+Licence : Creative Commons Zero (CC0 1.0), domaine public.
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Le crédit n'est pas obligatoire ; il est donné ici par courtoisie.

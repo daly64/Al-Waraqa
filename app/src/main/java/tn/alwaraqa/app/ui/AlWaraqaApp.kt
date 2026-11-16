@@ -100,7 +100,14 @@ fun AlWaraqaApp(library: Library, incoming: Uri?, onIncomingHandled: () -> Unit)
                     .fillMaxWidth()
             ) {
                 when (tab) {
-                    Tab.Documents -> HomeScreen(recents = recents, onOpen = { open(it, null) })
+                    Tab.Documents -> HomeScreen(
+                        recents = recents,
+                        onOpen = { open(it, null) },
+                        onRemoveRecent = {
+                            library.remove(it.uri)
+                            recents = library.recents()
+                        }
+                    )
                     Tab.Bookmarks -> BookmarksScreen(
                         bookmarks = bookmarks,
                         onOpen = { uri, page -> open(uri, page) },

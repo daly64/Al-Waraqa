@@ -1,11 +1,18 @@
 package tn.alwaraqa.app.ui.screens
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.result.IntentSenderRequest
+import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,13 +29,19 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,7 +54,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import tn.alwaraqa.app.data.RecentDoc
+import tn.alwaraqa.app.pdf.PhoneLibrary
+import tn.alwaraqa.app.pdf.PhonePdf
+import tn.alwaraqa.app.pdf.Scanner
+import tn.alwaraqa.app.ui.components.DocGlyph
 import tn.alwaraqa.app.ui.components.WaraqaLogo
 import tn.alwaraqa.app.ui.theme.Brick
 import tn.alwaraqa.app.ui.theme.Cream
@@ -50,11 +68,17 @@ import tn.alwaraqa.app.ui.theme.Ink
 import tn.alwaraqa.app.ui.theme.InkSoft
 import tn.alwaraqa.app.ui.theme.Paper
 import tn.alwaraqa.app.ui.theme.Sand
+import tn.alwaraqa.app.ui.theme.SandSoft
 import tn.alwaraqa.app.ui.theme.Terracotta
+import java.text.DateFormat
+import java.util.Date
 
-/** Accueil : reprendre la lecture en cours, rouvrir un document récent ou ouvrir un nouveau PDF. */
+/**
+ * Accueil : reprendre la lecture en cours, les documents récents, puis tous les PDF
+ * du téléphone. Le champ de recherche filtre les deux listes par nom.
+ */
 @Composable
-fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit) {
+fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit, onRemoveRecent: (RecentDoc) -> Unit) {
     val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -67,8 +91,48 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit) {
         }
     }
 
+    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val saved = Scanner.save(context, result.data)
+            if (saved != null) {
+                Toast.makeText(context, "Document enregistré dans Documents/Al Waraqa", Toast.LENGTH_SHORT).show()
+                onOpen(saved)
+            }
+        }
+    }
+    fun startScan() {
+        val activity = Scanner.findActivity(context)
+        if (activity == null) return
+        Scanner.prepare(
+            activity,
+            onReady = { scanLauncher.launch(it) },
+            onError = { Toast.makeText(context, "Numérisation indisponible sur cet appareil", Toast.LENGTH_LONG).show() }
+        )
+    }
+    var hasAccess by remember { mutableStateOf(PhoneLibrary.hasAccess(context)) }
+    var refresh by remember { mutableIntStateOf(0) }
+    var phone by remember { mutableStateOf<List<PhonePdf>?>(null) }
+    val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        hasAccess = PhoneLibrary.hasAccess(context)
+        refresh++
+    }
+
+    // Au retour des réglages Android, l'accès a peut-être été donné
+    LifecycleResumeEffect(Unit) {
+        hasAccess = PhoneLibrary.hasAccess(context)
+        refresh++
+        onPauseOrDispose { }
+    }
+    LaunchedEffect(hasAccess, refresh) {
+        phone = if (hasAccess) PhoneLibrary.scan(context) else emptyList()
+    }
+
     var query by rememberSaveable { mutableStateOf("") }
+    var toRemove by remember { mutableStateOf<RecentDoc?>(null) }
     val wanted = query.trim()
+    val phoneList = phone.orEmpty()
+    val recentShown = if (wanted.isEmpty()) recents else recents.filter { it.name.contains(wanted, ignoreCase = true) }
+    val phoneShown = if (wanted.isEmpty()) phoneList else phoneList.filter { it.name.contains(wanted, ignoreCase = true) }
 
     Column(
         Modifier
@@ -85,93 +149,137 @@ fun HomeScreen(recents: List<RecentDoc>, onOpen: (Uri) -> Unit) {
             fontSize = 32.sp
         )
         Spacer(Modifier.height(16.dp))
-        if (recents.isNotEmpty()) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text("Rechercher un PDF") },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(20.dp))
-        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("Rechercher un PDF") },
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(16.dp))
 
-        if (recents.isEmpty()) {
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                WaraqaLogo(height = 96.dp, page = Sand, fold = Color(0xFFD9BF98), letter = Cream)
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    "Aucun document pour l'instant",
-                    color = Ink,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Les PDF que vous ouvrez apparaîtront ici.",
-                    color = InkSoft,
-                    fontSize = 15.sp,
-                    textAlign = TextAlign.Center
-                )
-            }
-        } else if (wanted.isNotEmpty()) {
-            // Recherche par nom parmi les documents déjà ouverts
-            val found = recents.filter { it.name.contains(wanted, ignoreCase = true) }
-            LazyColumn(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                item {
-                    SectionLabel(if (found.isEmpty()) "Aucun document trouvé" else "${found.size} document(s)")
-                }
-                items(found, key = { it.uri }) { doc ->
-                    RecentRow(doc) { onOpen(Uri.parse(doc.uri)) }
-                    HorizontalDivider(color = Sand)
-                }
-            }
-        } else {
-            val current = recents.first()
-            val others = recents.drop(1)
-            LazyColumn(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                item {
+        LazyColumn(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
+            // Reprendre la lecture (hors recherche)
+            if (wanted.isEmpty() && recents.isNotEmpty()) {
+                val current = recents.first()
+                item(key = "reprendre") {
                     SectionLabel("Reprendre la lecture")
                     Spacer(Modifier.height(10.dp))
                     ResumeCard(current) { onOpen(Uri.parse(current.uri)) }
                     Spacer(Modifier.height(24.dp))
                 }
-                if (others.isNotEmpty()) {
-                    item { SectionLabel("Récents") }
-                    items(others, key = { it.uri }) { doc ->
-                        RecentRow(doc) { onOpen(Uri.parse(doc.uri)) }
-                        HorizontalDivider(color = Sand)
+            }
+
+            val recentRows = if (wanted.isEmpty()) recentShown.drop(1) else recentShown
+            if (recentRows.isNotEmpty()) {
+                item(key = "titre-recents") { SectionLabel("Récents") }
+                items(recentRows, key = { "r-" + it.uri }) { doc ->
+                    RecentRow(
+                        doc = doc,
+                        onClick = { onOpen(Uri.parse(doc.uri)) },
+                        onLongClick = { toRemove = doc }
+                    )
+                    HorizontalDivider(color = Sand)
+                }
+                item(key = "espace-recents") { Spacer(Modifier.height(24.dp)) }
+            }
+
+            item(key = "titre-telephone") {
+                SectionLabel(
+                    if (hasAccess && phone != null) "Sur le téléphone · ${phoneShown.size}" else "Sur le téléphone"
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+            if (!hasAccess) {
+                item(key = "acces") {
+                    AccessCard(
+                        onAllow = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                PhoneLibrary.openAccessSettings(context)
+                            } else {
+                                askPermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                            }
+                        }
+                    )
+                }
+            } else if (phone != null && phoneShown.isEmpty()) {
+                item(key = "vide") {
+                    Text(
+                        if (wanted.isEmpty()) "Aucun PDF trouvé sur le téléphone." else "Aucun PDF ne correspond.",
+                        color = InkSoft,
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    )
+                }
+            } else {
+                items(phoneShown, key = { "t-" + it.uri }) { pdf ->
+                    PhoneRow(pdf) { onOpen(pdf.uri) }
+                    HorizontalDivider(color = Sand)
+                }
+            }
+
+            if (recents.isEmpty() && !hasAccess) {
+                item(key = "bienvenue") {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        WaraqaLogo(height = 72.dp, page = Sand, fold = Color(0xFFD9BF98), letter = Cream)
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Les PDF que vous ouvrez apparaîtront aussi ici.",
+                            color = InkSoft,
+                            fontSize = 15.sp,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { picker.launch(arrayOf("application/pdf")) },
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-        ) {
-            Text("Ouvrir un PDF", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(
+                onClick = { startScan() },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp)
+            ) {
+                Text("Numériser", color = Brick, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Button(
+                onClick = { picker.launch(arrayOf("application/pdf")) },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(56.dp)
+            ) {
+                Text("Ouvrir un PDF", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
+    }
+
+    toRemove?.let { doc ->
+        AlertDialog(
+            onDismissRequest = { toRemove = null },
+            title = { Text("Retirer des récents ?") },
+            text = { Text("« ${doc.name} » ne sera plus dans la liste. Le fichier n'est pas supprimé du téléphone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemoveRecent(doc)
+                    toRemove = null
+                }) { Text("Retirer") }
+            },
+            dismissButton = { TextButton(onClick = { toRemove = null }) { Text("Annuler") } }
+        )
     }
 }
 
@@ -184,6 +292,31 @@ private fun SectionLabel(text: String) {
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 1.sp
     )
+}
+
+@Composable
+private fun AccessCard(onAllow: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(SandSoft)
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("Retrouver tous vos PDF", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Autorisez l'accès aux fichiers pour voir ici tous les PDF du téléphone (Téléchargements, WhatsApp, documents…). " +
+                "Al Waraqa ne lit que les PDF et rien ne quitte votre téléphone.",
+            color = InkSoft,
+            fontSize = 14.sp,
+            lineHeight = 20.sp
+        )
+        OutlinedButton(onClick = onAllow, shape = RoundedCornerShape(12.dp)) {
+            Text("Autoriser l'accès", color = Brick, fontWeight = FontWeight.SemiBold)
+        }
+    }
 }
 
 @Composable
@@ -232,28 +365,65 @@ private fun ResumeCard(doc: RecentDoc, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecentRow(doc: RecentDoc, onClick: () -> Unit) {
-    Column(
+private fun RecentRow(doc: RecentDoc, onClick: () -> Unit, onLongClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Retirer des récents")
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        DocGlyph(Brick)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                doc.name,
+                color = Ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "Page ${doc.lastPage + 1} sur ${doc.pageCount}",
+                color = InkSoft,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhoneRow(pdf: PhonePdf, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val details = remember(pdf) {
+        val size = Formatter.formatShortFileSize(context, pdf.size)
+        val date = DateFormat.getDateInstance(DateFormat.SHORT).format(Date(pdf.modified))
+        "$size · $date"
+    }
+    Row(
         Modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text(
-            doc.name,
-            color = Ink,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            "Page ${doc.lastPage + 1} sur ${doc.pageCount}",
-            color = InkSoft,
-            fontSize = 13.sp
-        )
+        DocGlyph(InkSoft)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                pdf.name,
+                color = Ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(details, color = InkSoft, fontSize = 13.sp)
+        }
     }
 }

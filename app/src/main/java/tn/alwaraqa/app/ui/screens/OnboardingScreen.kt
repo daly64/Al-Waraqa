@@ -54,8 +54,8 @@ private data class Welcome(val title: String, val text: String)
 
 private val Steps = listOf(
     Welcome(
-        "Vos PDF, ouverts en un geste",
-        "Choisissez un PDF sur votre téléphone, ou ouvrez-le directement depuis une autre application."
+        "Tous vos PDF, au même endroit",
+        "Al Waraqa retrouve les PDF de votre téléphone et les ouvre en un geste, même depuis une autre application."
     ),
     Welcome(
         "Tournez les pages comme un livre",

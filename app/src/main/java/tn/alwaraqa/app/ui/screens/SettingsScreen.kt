@@ -107,6 +107,12 @@ fun SettingsScreen(settings: Settings) {
             onChange = { settings.haptic = it }
         )
         Toggle(
+            title = "Touches de volume",
+            note = "Volume bas : page suivante. Volume haut : page précédente.",
+            checked = settings.volumeKeys,
+            onChange = { settings.volumeKeys = it }
+        )
+        Toggle(
             title = "Garder l'écran allumé",
             note = "Pendant la lecture.",
             checked = settings.keepScreenOn,

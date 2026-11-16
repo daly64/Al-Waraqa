@@ -9,11 +9,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,8 +35,12 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.min
@@ -49,17 +52,25 @@ private data class Turn(val forward: Boolean, val fromTop: Boolean)
 
 private enum class Gesture { Undecided, Turn, Pan, Zoom, Ignored }
 
+/** Mémoire des appuis, pour reconnaître un double appui. */
+private class Taps {
+    var lastAt = 0L
+    var lastPos = Offset.Zero
+    var pending: Job? = null
+}
+
 private const val MAX_ZOOM = 5f
 private const val DOUBLE_TAP_ZOOM = 2.5f
+private const val DOUBLE_TAP_MS = 280L
 
 /**
  * Mode Livre : les pages se tournent au doigt, comme du papier.
  *
  * - glisser depuis la moitié droite : page suivante ; depuis la moitié gauche : page précédente ;
- * - appuyer sur le bord droit ou gauche : la page se tourne toute seule ;
+ * - appuyer sur le bord droit ou gauche : la page se tourne aussitôt, sans attente ;
  * - appuyer au centre : [onCenterTap] (afficher ou masquer les barres) ;
- * - écarter ou pincer deux doigts : zoom ; une fois zoomé, un doigt déplace la page ;
- * - double appui : zoom rapide, puis retour à la page entière.
+ * - double appui au centre : zoom rapide, puis retour à la page entière ;
+ * - écarter ou pincer deux doigts : zoom ; une fois zoomé, un doigt déplace la page.
  *
  * Le pli est calculé en 2D : la ligne de pli est la médiatrice entre le coin de la page
  * et sa position actuelle. D'un côté on voit la page du dessous, de l'autre le verso replié.
@@ -72,6 +83,7 @@ fun BookPager(
     sharpPage: ImageBitmap?,
     paper: Color,
     filter: ColorFilter?,
+    flipRequests: Flow<Boolean>,
     onIndexChange: (Int) -> Unit,
     onTurned: () -> Unit,
     onCenterTap: () -> Unit,
@@ -82,6 +94,8 @@ fun BookPager(
     var turn by remember { mutableStateOf<Turn?>(null) }
     var corner by remember { mutableStateOf(Offset.Zero) }
     var busy by remember { mutableStateOf(false) }
+    var viewSize by remember { mutableStateOf(IntSize.Zero) }
+    val taps = remember { Taps() }
     val currentIndex by rememberUpdatedState(index)
     val currentCount by rememberUpdatedState(pageCount)
     val currentOnIndexChange by rememberUpdatedState(onIndexChange)
@@ -100,6 +114,8 @@ fun BookPager(
         currentOnZoomChange(1f)
     }
 
+    fun canTurn(forward: Boolean) = if (forward) currentIndex < currentCount - 1 else currentIndex > 0
+
     /** Applique un pincement autour de [centroid] et un déplacement, sans sortir de la page. */
     fun applyZoom(centroid: Offset, zoomChange: Float, move: Offset, width: Float, height: Float) {
         val newZoom = (zoom * zoomChange).coerceIn(1f, MAX_ZOOM)
@@ -112,8 +128,6 @@ fun BookPager(
         zoom = newZoom
         currentOnZoomChange(newZoom)
     }
-
-    fun canTurn(forward: Boolean) = if (forward) currentIndex < currentCount - 1 else currentIndex > 0
 
     /** Garde le coin à portée de la reliure : une feuille ne s'étire pas. */
     fun clampCorner(p: Offset, cornerY: Float, width: Float): Offset {
@@ -151,15 +165,15 @@ fun BookPager(
         }
     }
 
-    /** Tourne la page toute seule, après un appui sur un bord. */
+    /** Tourne la page toute seule (appui sur un bord, touche de volume). */
     fun flip(forward: Boolean, width: Float, height: Float) {
-        if (busy || turn != null || !canTurn(forward)) return
+        if (busy || turn != null || !canTurn(forward) || width <= 0f) return
         busy = true
         corner = if (forward) Offset(width, height) else Offset(-width, height)
         turn = Turn(forward, fromTop = false)
         val lift = height * 0.16f
         scope.launch {
-            animate(0f, 1f, animationSpec = tween(520, easing = FastOutSlowInEasing)) { v, _ ->
+            animate(0f, 1f, animationSpec = tween(480, easing = FastOutSlowInEasing)) { v, _ ->
                 val p = if (forward) v else 1f - v
                 val raw = Offset(width - 2f * width * p, height - sin(PI.toFloat() * p) * lift)
                 corner = clampCorner(raw, height, width)
@@ -192,22 +206,43 @@ fun BookPager(
         }
     }
 
+    /**
+     * Un appui bref. Sur un bord (sans zoom) la page tourne tout de suite.
+     * Au centre, on attend un court instant pour savoir si un second appui suit.
+     */
+    fun tap(pos: Offset, time: Long, width: Float, height: Float, nearPx: Float) {
+        val isDouble = time - taps.lastAt < DOUBLE_TAP_MS && (pos - taps.lastPos).getDistance() < nearPx
+        if (isDouble) {
+            taps.pending?.cancel()
+            taps.lastAt = 0L
+            toggleZoom(pos, width, height)
+            return
+        }
+        val onEdge = zoom <= 1.01f && (pos.x < width * 0.25f || pos.x > width * 0.75f)
+        if (onEdge) {
+            taps.lastAt = 0L
+            flip(pos.x > width / 2f, width, height)
+            return
+        }
+        taps.lastAt = time
+        taps.lastPos = pos
+        taps.pending?.cancel()
+        taps.pending = scope.launch {
+            delay(DOUBLE_TAP_MS)
+            currentOnCenterTap()
+        }
+    }
+
+    // Touches de volume
+    LaunchedEffect(flipRequests) {
+        flipRequests.collect { forward ->
+            if (zoom <= 1.01f) flip(forward, viewSize.width.toFloat(), viewSize.height.toFloat())
+        }
+    }
+
     Canvas(
         modifier
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onDoubleTap = { pos -> toggleZoom(pos, size.width.toFloat(), size.height.toFloat()) }
-                ) { pos ->
-                    val w = size.width.toFloat()
-                    val h = size.height.toFloat()
-                    when {
-                        zoom > 1.01f -> currentOnCenterTap()
-                        pos.x < w * 0.25f -> flip(false, w, h)
-                        pos.x > w * 0.75f -> flip(true, w, h)
-                        else -> currentOnCenterTap()
-                    }
-                }
-            }
+            .onSizeChanged { viewSize = it }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -216,10 +251,16 @@ fun BookPager(
                     val slop = viewConfiguration.touchSlop
                     var mode = Gesture.Undecided
                     var travelled = Offset.Zero
+                    var maxPointers = 1
+                    var upTime = down.uptimeMillis
                     while (true) {
                         val event = awaitPointerEvent()
                         val pressed = event.changes.filter { it.pressed }
-                        if (pressed.isEmpty()) break
+                        if (pressed.size > maxPointers) maxPointers = pressed.size
+                        if (pressed.isEmpty()) {
+                            upTime = event.changes.firstOrNull()?.uptimeMillis ?: upTime
+                            break
+                        }
                         if (pressed.size >= 2) {
                             // Deux doigts : zoom. Une page en cours de geste retombe à plat.
                             if (mode == Gesture.Turn && !busy) turn = null
@@ -286,6 +327,9 @@ fun BookPager(
                         zoom = 1f
                         pan = Offset.Zero
                         currentOnZoomChange(1f)
+                    }
+                    if (mode == Gesture.Undecided && maxPointers == 1 && upTime - down.uptimeMillis < 500) {
+                        tap(down.position, upTime, w, h, slop * 6f)
                     }
                 }
             }

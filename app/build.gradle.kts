@@ -13,8 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Mise à jour : augmenter versionCode à chaque version, ne jamais changer applicationId.
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     // Clé de test fixe, gardée dans le dépôt : chaque APK porte la même signature,
@@ -61,6 +61,7 @@ dependencies {
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
@@ -70,4 +71,5 @@ dependencies {
 
     // Moteur PDF embarqué : sommaire, texte et mots de passe sur toutes les versions d'Android
     implementation("io.legere:pdfiumandroid:1.0.30")
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
 }
