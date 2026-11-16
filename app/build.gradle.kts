@@ -72,6 +72,6 @@ dependencies {
     // Moteur PDF embarqué : sommaire, texte et mots de passe sur toutes les versions d'Android
     implementation("io.legere:pdfiumandroid:1.0.30")
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
-    implementation("cz.adaptech.tesseract4android:tesseract4android:4.7.0")
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 }

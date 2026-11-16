@@ -46,7 +46,6 @@ object Ocr {
                 val engine = ensureEngine(context.applicationContext)
                 engine.setImage(bitmap)
                 val text = engine.getUTF8Text().orEmpty()
-                engine.clear()
                 text.trim()
             } catch (e: Throwable) {
                 ""
