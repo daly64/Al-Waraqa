@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Thème principal : fond crème -->
+    <style name="Theme.AlWaraqa" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/waraqa_cream</item>
+    </style>
+
+    <!-- Splash système : logo sur fond brique -->
+    <style name="Theme.AlWaraqa.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/waraqa_brick</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.AlWaraqa</item>
+    </style>
+</resources>

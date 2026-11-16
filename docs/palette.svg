@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 150" width="760" height="150" role="img" aria-label="Palette Al Waraqa : brique, terre cuite, sable, papier, crème, encre">
+<style>text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;fill:#808080}.n{font-weight:600;font-size:14px}.h{font-size:12px}</style>
+<rect x="0" y="0" width="110" height="88" rx="14" fill="#A63A24"/><text class="n" x="0" y="112">Brique</text><text class="h" x="0" y="132">#A63A24</text>
+<rect x="130" y="0" width="110" height="88" rx="14" fill="#7A2817"/><text class="n" x="130" y="112">Terre cuite</text><text class="h" x="130" y="132">#7A2817</text>
+<rect x="260" y="0" width="110" height="88" rx="14" fill="#E4C9A0"/><text class="n" x="260" y="112">Sable</text><text class="h" x="260" y="132">#E4C9A0</text>
+<rect x="390.5" y="0.5" width="109" height="87" rx="14" fill="#FFFBF3" stroke="#E4C9A0"/><text class="n" x="390" y="112">Papier</text><text class="h" x="390" y="132">#FFFBF3</text>
+<rect x="520.5" y="0.5" width="109" height="87" rx="14" fill="#F6EEDF" stroke="#E4C9A0"/><text class="n" x="520" y="112">Crème</text><text class="h" x="520" y="132">#F6EEDF</text>
+<rect x="650" y="0" width="110" height="88" rx="14" fill="#2A1D17"/><text class="n" x="650" y="112">Encre</text><text class="h" x="650" y="132">#2A1D17</text>
+</svg>

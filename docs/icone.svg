@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="160" height="160" role="img" aria-label="Icône Al Waraqa">
+<rect width="512" height="512" rx="116" fill="#A63A24"/>
+<path d="M158 92h132l84 84v228a20 20 0 0 1-20 20H158a20 20 0 0 1-20-20V112a20 20 0 0 1 20-20z" fill="#FFFBF3"/>
+<path d="M290 92l84 84h-64a20 20 0 0 1-20-20z" fill="#E4C9A0"/>
+<polyline points="184,262 214,356 256,286 298,356 328,262" fill="none" stroke="#A63A24" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
