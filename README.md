@@ -45,6 +45,8 @@
 - 100 % locale, écrite en Kotlin avec Jetpack Compose.
 - Rendu des PDF par le moteur intégré d'Android (`PdfRenderer`).
 - Mode Livre : la page suit le doigt et se replie comme du papier (`ui/reader/BookPager.kt`).
+- Marges blanches rognées automatiquement : le texte occupe tout l'écran.
+- Zoom à deux doigts, avec page redessinée finement pour rester nette.
 - Reprise à la dernière page lue.
 
 ### Structure

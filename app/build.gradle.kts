@@ -13,8 +13,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Mise à jour : augmenter versionCode à chaque version, ne jamais changer applicationId.
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     // Clé de test fixe, gardée dans le dépôt : chaque APK porte la même signature,

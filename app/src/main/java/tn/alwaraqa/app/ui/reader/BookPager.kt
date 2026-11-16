@@ -4,9 +4,15 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +33,8 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlinx.coroutines.launch
@@ -38,12 +46,17 @@ import kotlin.math.sin
 /** Une page en train d'être tournée : vers l'avant ou l'arrière, prise par le coin du haut ou du bas. */
 private data class Turn(val forward: Boolean, val fromTop: Boolean)
 
+private enum class Gesture { Undecided, Turn, Pan, Zoom, Ignored }
+
+private const val MAX_ZOOM = 5f
+
 /**
  * Mode Livre : les pages se tournent au doigt, comme du papier.
  *
  * - glisser depuis la moitié droite : page suivante ; depuis la moitié gauche : page précédente ;
  * - appuyer sur le bord droit ou gauche : la page se tourne toute seule ;
- * - appuyer au centre : [onCenterTap] (afficher ou masquer les barres).
+ * - appuyer au centre : [onCenterTap] (afficher ou masquer les barres) ;
+ * - écarter ou pincer deux doigts : zoom ; une fois zoomé, un doigt déplace la page.
  *
  * Le pli est calculé en 2D : la ligne de pli est la médiatrice entre le coin de la page
  * et sa position actuelle. D'un côté on voit la page du dessous, de l'autre le verso replié.
@@ -53,9 +66,11 @@ fun BookPager(
     pageCount: Int,
     index: Int,
     pages: Map<Int, ImageBitmap>,
+    sharpPage: ImageBitmap?,
     paper: Color,
     onIndexChange: (Int) -> Unit,
     onCenterTap: () -> Unit,
+    onZoomChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
@@ -66,6 +81,31 @@ fun BookPager(
     val currentCount by rememberUpdatedState(pageCount)
     val currentOnIndexChange by rememberUpdatedState(onIndexChange)
     val currentOnCenterTap by rememberUpdatedState(onCenterTap)
+    val currentOnZoomChange by rememberUpdatedState(onZoomChange)
+
+    // Zoom : écran = décalage + zoom × page
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
+
+    // Nouvelle page : on repart sans zoom
+    LaunchedEffect(index) {
+        zoom = 1f
+        pan = Offset.Zero
+        currentOnZoomChange(1f)
+    }
+
+    /** Applique un pincement autour de [centroid] et un déplacement, sans sortir de la page. */
+    fun applyZoom(centroid: Offset, zoomChange: Float, move: Offset, width: Float, height: Float) {
+        val newZoom = (zoom * zoomChange).coerceIn(1f, MAX_ZOOM)
+        val ratio = newZoom / zoom
+        val moved = centroid - (centroid - pan) * ratio + move
+        pan = Offset(
+            moved.x.coerceIn(width - width * newZoom, 0f),
+            moved.y.coerceIn(height - height * newZoom, 0f)
+        )
+        zoom = newZoom
+        currentOnZoomChange(newZoom)
+    }
 
     fun canTurn(forward: Boolean) = if (forward) currentIndex < currentCount - 1 else currentIndex > 0
 
@@ -125,6 +165,7 @@ fun BookPager(
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
                     when {
+                        zoom > 1.01f -> currentOnCenterTap()
                         pos.x < w * 0.25f -> flip(false, w, h)
                         pos.x > w * 0.75f -> flip(true, w, h)
                         else -> currentOnCenterTap()
@@ -132,41 +173,96 @@ fun BookPager(
                 }
             }
             .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { start ->
-                        val w = size.width.toFloat()
-                        val h = size.height.toFloat()
-                        val forward = start.x > w / 2f
-                        if (!busy && turn == null && canTurn(forward)) {
-                            val t = Turn(forward, fromTop = start.y < h / 2f)
-                            val cornerY = if (t.fromTop) 0f else h
-                            // Au départ la page est à plat (avant) ou entièrement tournée (arrière)
-                            corner = if (forward) Offset(w, cornerY) else Offset(-w, cornerY)
-                            turn = t
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val w = size.width.toFloat()
+                    val h = size.height.toFloat()
+                    val slop = viewConfiguration.touchSlop
+                    var mode = Gesture.Undecided
+                    var travelled = Offset.Zero
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) break
+                        if (pressed.size >= 2) {
+                            // Deux doigts : zoom. Une page en cours de geste retombe à plat.
+                            if (mode == Gesture.Turn && !busy) turn = null
+                            if (!busy && turn == null) {
+                                mode = Gesture.Zoom
+                                applyZoom(
+                                    centroid = event.calculateCentroid(useCurrent = false),
+                                    zoomChange = event.calculateZoom(),
+                                    move = event.calculatePan(),
+                                    width = w,
+                                    height = h
+                                )
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
+                        } else {
+                            val change = pressed.first()
+                            val delta = change.positionChange()
+                            when (mode) {
+                                Gesture.Undecided -> {
+                                    travelled += delta
+                                    if (travelled.getDistance() > slop) {
+                                        if (zoom > 1.01f) {
+                                            mode = Gesture.Pan
+                                        } else {
+                                            val forward = down.position.x > w / 2f
+                                            if (!busy && turn == null && canTurn(forward)) {
+                                                val t = Turn(forward, fromTop = down.position.y < h / 2f)
+                                                val cornerY = if (t.fromTop) 0f else h
+                                                // Au départ la page est à plat (avant) ou entièrement tournée (arrière)
+                                                corner = if (forward) Offset(w, cornerY) else Offset(-w, cornerY)
+                                                turn = t
+                                                mode = Gesture.Turn
+                                            } else {
+                                                mode = Gesture.Ignored
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Gesture.Turn -> {
+                                    val t = turn
+                                    if (t != null && !busy) {
+                                        change.consume()
+                                        val cornerY = if (t.fromTop) 0f else h
+                                        val touch = change.position
+                                        // Vers l'avant le coin suit le doigt ; vers l'arrière la page
+                                        // se déplie deux fois plus vite pour être à plat au bord droit.
+                                        val raw = if (t.forward) touch else Offset(2f * touch.x - w, touch.y)
+                                        corner = clampCorner(raw, cornerY, w)
+                                    }
+                                }
+
+                                Gesture.Pan, Gesture.Zoom -> {
+                                    change.consume()
+                                    applyZoom(Offset.Zero, 1f, delta, w, h)
+                                }
+
+                                Gesture.Ignored -> Unit
+                            }
                         }
-                    },
-                    onDrag = { change, _ ->
-                        val t = turn
-                        if (t != null && !busy) {
-                            change.consume()
-                            val w = size.width.toFloat()
-                            val h = size.height.toFloat()
-                            val cornerY = if (t.fromTop) 0f else h
-                            val touch = change.position
-                            // Vers l'avant le coin suit le doigt ; vers l'arrière la page
-                            // se déplie deux fois plus vite pour être à plat au bord droit.
-                            val raw = if (t.forward) touch else Offset(2f * touch.x - w, touch.y)
-                            corner = clampCorner(raw, cornerY, w)
-                        }
-                    },
-                    onDragEnd = { settle(size.width.toFloat(), size.height.toFloat()) },
-                    onDragCancel = { settle(size.width.toFloat(), size.height.toFloat()) }
-                )
+                    }
+                    if (mode == Gesture.Turn) settle(w, h)
+                    if (zoom < 1.05f && zoom != 1f) {
+                        zoom = 1f
+                        pan = Offset.Zero
+                        currentOnZoomChange(1f)
+                    }
+                }
             }
     ) {
         val t = turn
         if (t == null) {
-            drawSheet(pages[index], paper)
+            drawRect(paper)
+            withTransform({
+                translate(pan.x, pan.y)
+                scale(zoom, zoom, pivot = Offset.Zero)
+            }) {
+                drawSheet(sharpPage ?: pages[index], paper)
+            }
         } else {
             val top = if (t.forward) index else index - 1
             val under = if (t.forward) index + 1 else index

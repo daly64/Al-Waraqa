@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tn.alwaraqa.app.data.Library
 import tn.alwaraqa.app.data.RecentDoc
@@ -83,6 +84,9 @@ fun ReaderScreen(uri: Uri, library: Library, onClose: () -> Unit) {
     val pages = remember(uri) { mutableStateMapOf<Int, ImageBitmap>() }
     val currentIndex by rememberUpdatedState(index)
     val renderedFor = remember(uri) { arrayOf(IntSize.Zero) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    // Page courante rendue plus finement quand on zoome, pour que le texte reste net
+    var sharp by remember(uri) { mutableStateOf<Pair<Int, ImageBitmap>?>(null) }
 
     // Ouverture du document, reprise à la dernière page lue
     LaunchedEffect(uri) {
@@ -133,6 +137,23 @@ fun ReaderScreen(uri: Uri, library: Library, onClose: () -> Unit) {
         library.save(RecentDoc(uri.toString(), name, current.pageCount, index, System.currentTimeMillis()))
     }
 
+    // Zoom : après une courte pause, la page est redessinée à la finesse du zoom
+    val sharpness = when {
+        zoom <= 1.15f -> 1
+        zoom <= 2.2f -> 2
+        else -> 3
+    }
+    LaunchedEffect(current, index, sharpness, viewSize) {
+        if (sharp?.first != index) sharp = null
+        if (current == null || sharpness == 1 || viewSize.width == 0 || viewSize.height == 0) {
+            sharp = null
+            return@LaunchedEffect
+        }
+        delay(220)
+        val bitmap = current.render(index, viewSize.width * sharpness, viewSize.height * sharpness)
+        if (bitmap != null) sharp = index to bitmap.asImageBitmap()
+    }
+
     BackHandler { onClose() }
 
     Box(
@@ -172,9 +193,11 @@ fun ReaderScreen(uri: Uri, library: Library, onClose: () -> Unit) {
                     pageCount = current.pageCount,
                     index = index,
                     pages = pages,
+                    sharpPage = sharp?.takeIf { it.first == index }?.second,
                     paper = Color.White,
                     onIndexChange = { index = it.coerceIn(0, current.pageCount - 1) },
                     onCenterTap = { barsVisible = !barsVisible },
+                    onZoomChange = { zoom = it },
                     modifier = Modifier.fillMaxSize()
                 )
 
